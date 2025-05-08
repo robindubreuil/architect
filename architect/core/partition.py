@@ -14,6 +14,7 @@ from architect.utils.command import CommandRunner
 from architect.utils.format import TermColors, colorize, parse_size_spec
 from architect.utils.types import DiskInfo, PartitionTable
 from architect.core.exceptions import NotEnoughSpaceError, PartitioningError
+from architect.utils.format import bytes_to_human_readable
 
 logger = logging.getLogger('architect')
 
