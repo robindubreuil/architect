@@ -123,44 +123,96 @@ def prepare_disk(disk: str, disk_info: DiskInfo, args: Any, cmd_runner: CommandR
     # Build sfdisk script
     script_lines = ["label: gpt"]
     
-    # Add metadata comments
+    # Calculate overprovisioning size if specified
+    overprovision_size = None
     if args.overprovision:
-        script_lines.append(f"# Overprovisioning: {args.overprovision}")
-    if args.windows:
-        script_lines.append("# Dual-boot configuration with Windows")
+        try:
+            overprovision_size = parse_size_spec(args.overprovision, disk_info["size_bytes"])
+            overprovision_percent = (overprovision_size / disk_info["size_bytes"]) * 100
+            logger.info(f"Setting aside {bytes_to_human_readable(overprovision_size)} ({overprovision_percent:.1f}%) for SSD overprovisioning")
+            script_lines.append(f"# Overprovisioning: {bytes_to_human_readable(overprovision_size)}")
+        except ValueError:
+            logger.warning(f"Invalid overprovisioning specification: {args.overprovision}, ignoring")
     
-    # Always add the EFI partition (shared between Windows and Linux)
-    script_lines.append("size=550MiB, type=U, attrs=RequiredPartition, name=\"EFI System\"")
+    # Calculate available space after overprovisioning
+    available_size = disk_info["size_bytes"]
+    if overprovision_size:
+        available_size -= overprovision_size
     
-    # Add Windows partitions if requested
+    # Add Windows partitions if requested and calculate remaining space
     if args.windows:
-        # Validate Windows size - if it's not valid, let it raise an exception
         try:
             # Check if minimum size is met
-            windows_bytes = parse_size_spec(args.windows, disk_info["size_bytes"])
+            windows_bytes = parse_size_spec(args.windows, available_size)
             windows_gib = windows_bytes / (1024**3)
             
             if windows_gib < MIN_WINDOWS_SIZE_GIB:
                 raise NotEnoughSpaceError(
                     f"Windows partition size must be at least {MIN_WINDOWS_SIZE_GIB} GiB, got {windows_gib:.1f} GiB"
                 )
+            
+            # Calculate the remaining space after Windows partitions
+            msr_size = 16 * 1024 * 1024  # 16 MiB
+            recovery_size = WINDOWS_RECOVERY_SIZE_MIB * 1024 * 1024  # 750 MiB
+            windows_total = windows_bytes + msr_size + recovery_size
+            
+            if windows_total > available_size:
+                raise NotEnoughSpaceError(
+                    f"Not enough space for Windows partition and overprovisioning. " +
+                    f"Available: {bytes_to_human_readable(available_size)}, " +
+                    f"Requested: {bytes_to_human_readable(windows_total)} " +
+                    f"(Windows: {bytes_to_human_readable(windows_bytes)}, " +
+                    f"MSR: {bytes_to_human_readable(msr_size)}, " +
+                    f"Recovery: {bytes_to_human_readable(recovery_size)})"
+                )
+            
+            available_size -= windows_total
+            script_lines.append("# Dual-boot configuration with Windows")
+            
         except ValueError:
             raise PartitioningError(f"Invalid Windows size specification: {args.windows}")
-        
+    
+    # Always add the EFI partition (shared between Windows and Linux)
+    efi_size = 550 * 1024 * 1024  # 550 MiB
+    available_size -= efi_size
+    script_lines.append("size=550MiB, type=U, attrs=RequiredPartition, name=\"EFI System\"")
+    
+    # Add Windows partitions if requested
+    if args.windows:
         # Windows partitions group
         script_lines.append("# Windows partitions")
         script_lines.append("size=16MiB, type=E3C9E316-0B5C-4DB8-817D-F92DF00215AE, name=\"Microsoft reserved\"")
         script_lines.append(f"size={args.windows}, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name=\"Windows\"")
         script_lines.append(f"size={WINDOWS_RECOVERY_SIZE_MIB}MiB, type=DE94BBA4-06D1-4D40-A16A-BFD50179D6AC, attrs=RequiredPartition,63, name=\"Windows Recovery\"")
             
-        system_partition_type = get_architecture_specific_partition_type(args)
+    # Get architecture-specific partition type
+    system_partition_type = get_architecture_specific_partition_type(args)
 
-        # Get architecture-specific partition type
-        system_partition_type = get_architecture_specific_partition_type(args)
+    # Calculate the Linux boot partition size
+    boot_size = 1024 * 1024 * 1024  # 1 GiB
+    available_size -= boot_size
+    
+    # Check if we have enough space left
+    if available_size <= 0:
+        raise NotEnoughSpaceError(
+            f"Not enough space left for Linux system partition after allocating " +
+            f"EFI ({bytes_to_human_readable(efi_size)}), " +
+            f"boot ({bytes_to_human_readable(boot_size)}), " +
+            (f"Windows partitions, " if args.windows else "") +
+            (f"and overprovisioning ({bytes_to_human_readable(overprovision_size)})" if overprovision_size else "")
+        )
 
-        # Add Linux partitions
-        script_lines.append("# Linux partitions")
-        script_lines.append("size=1GiB, type=L, name=\"Linux boot\"")
+    # Add Linux partitions
+    script_lines.append("# Linux partitions")
+    script_lines.append("size=1GiB, type=L, name=\"Linux boot\"")
+    
+    # If overprovisioning is used, specify exact size for system partition instead of using all remaining space
+    if overprovision_size:
+        system_size_spec = f"size={bytes_to_human_readable(available_size)}"
+        script_lines.append(f"{system_size_spec}, type={system_partition_type}, name=\"Linux root\"")
+        script_lines.append(f"# Unallocated space for SSD overprovisioning: {bytes_to_human_readable(overprovision_size)}")
+    else:
+        # Use all remaining space for system partition
         script_lines.append(f"size=+, type={system_partition_type}, name=\"Linux root\"")
     
     # Join the script lines

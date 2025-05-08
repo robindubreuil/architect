@@ -318,12 +318,22 @@ def main() -> int:
         
         # Execute main workflow
         try:
+            # CHANGEMENT: Si reset Opal est nécessaire, le faire avant de préparer le disque
+            if (args.hardware_encryption and 
+                isinstance(args.hardware_encryption, tuple) and 
+                len(args.hardware_encryption) >= 1 and 
+                args.hardware_encryption[0] and 
+                args.hardware_encryption[0].lower() != "none"):
+                from architect.core.encryption import reset_opal_drive
+                logger.info("OPAL reset with PSID requested, performing reset before disk preparation")
+                reset_opal_drive(args.disk, args.hardware_encryption[0], cmd_runner)
+            
             # Prepare the disk
             partitions = prepare_disk(args.disk, disk_info, args, cmd_runner)
             
             # Set up encryption if requested
             if args.hardware_encryption or args.software_encryption:
-                partitions = setup_encryption(partitions, args, cmd_runner)
+                partitions = setup_encryption(args.disk, partitions, args, cmd_runner)
             
             # Create filesystems
             create_filesystems(partitions, disk_info, args, cmd_runner)

@@ -13,6 +13,32 @@ from architect.core.exceptions import EncryptionError
 logger = logging.getLogger('architect')
 
 
+def reset_opal_drive(disk: str, psid: str, cmd_runner: CommandRunner) -> None:
+    """
+    Reset an Opal drive with the provided PSID.
+    This function should be called before any disk modifications.
+    
+    Args:
+        disk: Path to the disk device
+        psid: PSID for factory reset
+        cmd_runner: CommandRunner instance for executing commands
+        
+    Raises:
+        EncryptionError: If the reset fails
+    """
+    logger.info("Resetting Opal drive with PSID")
+    
+    try:
+        run_cryptsetup_cmd(
+            ["cryptsetup", "erase", "--hw-opal-factory-reset", disk],
+            f"{psid}\nYES\n",  # Auto-confirm with YES
+            cmd_runner
+        )
+        logger.info("Opal drive reset successful")
+    except Exception as e:
+        raise EncryptionError(f"Failed to reset Opal drive: {e}")
+
+
 def run_cryptsetup_cmd(cmd: List[str], secret_input: str, cmd_runner: CommandRunner) -> None:
     """
     Run a cryptsetup command with the provided secret input.
@@ -31,7 +57,7 @@ def run_cryptsetup_cmd(cmd: List[str], secret_input: str, cmd_runner: CommandRun
         raise EncryptionError(f"Cryptsetup command failed: {e.stderr if hasattr(e, 'stderr') else str(e)}")
 
 
-def setup_encryption(partitions: Dict[str, str], args: Any, cmd_runner: CommandRunner) -> Dict[str, str]:
+def setup_encryption(disk: str, partitions: Dict[str, str], args: Any, cmd_runner: CommandRunner) -> Dict[str, str]:
     """
     Set up encryption for the system partition using cryptsetup for both
     hardware (Opal) and software (LUKS) encryption.
@@ -59,19 +85,6 @@ def setup_encryption(partitions: Dict[str, str], args: Any, cmd_runner: CommandR
     luks_device = f"/dev/mapper/{luks_name}"
     
     try:
-        # Handle PSID reset for hardware encryption if needed
-        if args.hardware_encryption:
-            psid, admin_secret, luks_secret = args.hardware_encryption
-            
-            # Reset drive if PSID is provided and not empty
-            if psid and psid.lower() != "none":
-                logger.info("Resetting Opal drive with PSID")
-                run_cryptsetup_cmd(
-                    ["cryptsetup", "erase", "--hw-opal-factory-reset", system_partition],
-                    f"{psid}\nYES\n",  # Auto-confirm with YES
-                    cmd_runner
-                )
-        
         # Setup based on encryption mode
         if hw_only:
             # Hardware-only encryption (Opal)
@@ -79,7 +92,7 @@ def setup_encryption(partitions: Dict[str, str], args: Any, cmd_runner: CommandR
             logger.info("Setting up hardware-only encryption (Opal 2.0)")
             
             run_cryptsetup_cmd(
-                ["cryptsetup", "luksFormat", "--type", "luks2", "--hw-opal-only", system_partition],
+                ["cryptsetup", "luksFormat", "--type", "luks2", "--hw-opal-only", disk],
                 f"{luks_secret}\n{luks_secret}\n{admin_secret}\n{admin_secret}\n",
                 cmd_runner
             )
