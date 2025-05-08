@@ -92,7 +92,7 @@ def setup_encryption(disk: str, partitions: Dict[str, str], args: Any, cmd_runne
             logger.info("Setting up hardware-only encryption (Opal 2.0)")
             
             run_cryptsetup_cmd(
-                ["cryptsetup", "luksFormat", "--type", "luks2", "--hw-opal-only", disk],
+                ["cryptsetup", "luksFormat", "--type", "luks2", "--hw-opal-only", system_partition],
                 f"{luks_secret}\n{luks_secret}\n{admin_secret}\n{admin_secret}\n",
                 cmd_runner
             )
