@@ -50,14 +50,14 @@ def bytes_to_human_readable(size_bytes: int) -> str:
         Human readable size string with proper binary unit
     """
     if size_bytes < 1024:
-        return f"{size_bytes} B"
+        return f"{size_bytes}B"
     
     for unit in ['KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB']:
         size_bytes /= 1024
         if size_bytes < 1024:
-            return f"{size_bytes:.2f} {unit}"
+            return f"{size_bytes:.2f}{unit}"
     
-    return f"{size_bytes:.2f} EiB"
+    return f"{size_bytes:.2f}EiB"
 
 
 def parse_size_spec(spec: str, disk_size_bytes: int) -> int:
